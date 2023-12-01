@@ -8,27 +8,28 @@ module Pretender
   class Error < StandardError; end
 
   module Methods
-    def impersonates(scope = :user, opts = {})
-      impersonated_method = opts[:method] || :"current_#{scope}"
+    def impersonates(impersonated_scope = :user, impersonator_scope = :user, opts = {})
+      impersonated_method = opts[:method] || :"current_#{impersonated_scope}"
+      impersonator_method = :"current_#{impersonator_scope}"
       impersonate_with = opts[:with] || proc { |id|
-        klass = scope.to_s.classify.constantize
+        klass = impersonated_scope.to_s.classify.constantize
         primary_key = klass.respond_to?(:primary_key) ? klass.primary_key : :id
         klass.find_by(primary_key => id)
       }
-      true_method = :"true_#{scope}"
-      session_key = :"impersonated_#{scope}_id"
-      impersonated_var = :"@impersonated_#{scope}"
-      stop_impersonating_method = :"stop_impersonating_#{scope}"
+      true_method = :"true_#{impersonator_scope}"
+      session_key = :"impersonated_#{impersonated_scope}_id"
+      impersonated_var = :"@impersonated_#{impersonated_scope}"
+      stop_impersonating_method = :"stop_impersonating_#{impersonated_scope}"
 
       # define methods
-      if method_defined?(impersonated_method) || private_method_defined?(impersonated_method)
-        alias_method true_method, impersonated_method
+      if method_defined?(impersonator_method) || private_method_defined?(impersonator_method)
+        alias_method true_method, impersonator_method
       else
         sc = superclass
         define_method true_method do
           # TODO handle private methods
-          raise Pretender::Error, "#{impersonated_method} must be defined before the impersonates method" unless sc.method_defined?(impersonated_method)
-          sc.instance_method(impersonated_method).bind(self).call
+          raise Pretender::Error, "#{impersonator_method} must be defined before the impersonates method" unless sc.method_defined?(impersonator_method)
+          sc.instance_method(impersonator_method).bind(self).call
         end
       end
       helper_method(true_method) if respond_to?(:helper_method)
@@ -52,10 +53,12 @@ module Pretender
           end
         end
 
-        impersonated_resource || send(true_method)
+        fallback_resource = -> { impersonated_method == impersonator_method ? send(true_method) : nil }
+
+        impersonated_resource || fallback_resource.call
       end
 
-      define_method :"impersonate_#{scope}" do |resource|
+      define_method :"impersonate_#{impersonated_scope}" do |resource|
         raise ArgumentError, "No resource to impersonate" unless resource
         raise Pretender::Error, "Must be logged in to impersonate" unless send(true_method)
 
